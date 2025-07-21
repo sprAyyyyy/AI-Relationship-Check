@@ -62,3 +62,49 @@ Additional columns like `ai_aspects` and original CSV columns are preserved.
 
 ## 📊 Summary Output
 
+Total companies analyzed: 20
+AI-related: 13 (65.0%)
+Non-AI: 7 (35.0%)
+
+Category Breakdown:
+Core AI: 6
+AI-Integrated: 5
+Non-AI: 7
+
+Top AI Aspects:
+NLP, AI Platforms, LLMs, Vision, ML APIs
+
+
+
+
+---
+
+## 🧪 Sample CSV Generator
+
+Use the "Generate Sample CSV" button to download a test file with:
+- 20 well-known companies
+- Diverse industries (AI, retail, software, pharma, etc.)
+
+---
+
+## 🧱 Project Structure
+
+📦 ai-company-checker/
+├── README.md
+├── ai_company_checker.ipynb ← ← Upload this to Colab
+└── sample_companies.csv ← (Optional) Generated for testing
+
+
+
+---
+
+## 📄 License
+
+MIT License © 2025 Tony Liu  
+Built with ❤️ for AI discovery and automation.
+
+---
+
+## 🙋 Questions or Feedback?
+
+Feel free to open an issue or contact via [GitHub](https://github.com/YOUR_USERNAME) or email.
