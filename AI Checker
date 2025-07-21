@@ -1,0 +1,414 @@
+# AI Company Checker with CSV Batch Processing - Google Colab Version (No Visualization)
+# Upload a CSV file with company names to batch check AI relevance
+
+# ============ Cell 1: Install Dependencies ============
+!pip install -q google-generativeai google-search-results pandas openpyxl
+
+# ============ Cell 2: Import Libraries and Setup ============
+import os
+import json
+import time
+import pandas as pd
+import google.generativeai as genai
+from serpapi import GoogleSearch
+from google.colab import userdata, files
+from IPython.display import display, HTML, clear_output
+import ipywidgets as widgets
+from datetime import datetime
+
+# Setup API Keys
+try:
+    GEMINI_API_KEY = userdata.get('GEMINI_API_KEY')
+    SERPAPI_API_KEY = userdata.get('SERPAPI_API_KEY')
+    genai.configure(api_key=GEMINI_API_KEY)
+    print("✅ API keys loaded successfully!")
+except Exception as e:
+    print("❌ Please add your API keys in Colab:")
+    print("1. Click the 🔑 icon in the left sidebar")
+    print("2. Add GEMINI_API_KEY")
+    print("3. Add SERPAPI_API_KEY")
+
+# ============ Cell 3: Core Functions ============
+def search_company_info(company_name):
+    """Search for company information to determine if it's AI-related"""
+    print(f"🔍 Searching: {company_name}")
+
+    try:
+        search = GoogleSearch({
+            "q": f"{company_name} company AI artificial intelligence machine learning technology",
+            "api_key": SERPAPI_API_KEY
+        })
+        result = search.get_dict()
+
+        # Collect relevant information
+        company_info = {
+            "company_name": company_name,
+            "answer_box": result.get('answer_box', {}),
+            "knowledge_graph": result.get('knowledge_graph', {}),
+            "organic_results": result.get('organic_results', [])[:5]
+        }
+
+        return company_info
+    except Exception as e:
+        print(f"⚠️ Search error for {company_name}: {str(e)}")
+        return None
+
+def check_ai_company(company_name):
+    """Check if a company is AI-related"""
+
+    # Search for company information
+    search_results = search_company_info(company_name)
+
+    if not search_results:
+        return {
+            "company": company_name,
+            "is_ai": "Unknown",
+            "confidence": "Low",
+            "explanation": "Search failed",
+            "ai_aspects": []
+        }
+
+    # Prepare data for analysis
+    data_for_analysis = json.dumps(search_results, indent=2)[:3000]
+
+    # Analyze with Gemini
+    model = genai.GenerativeModel('gemini-1.5-flash')
+
+    analysis_prompt = f"""
+    Based on this search information about {company_name}:
+    ```
+    {data_for_analysis}
+    ```
+
+    Analyze whether this company is AI-related. Consider:
+    1. Is AI/ML/Deep Learning a core part of their business?
+    2. Do they develop AI technologies, products, or services?
+    3. Is AI central to their offerings or just a supporting tool?
+    4. Are they known for AI research or innovation?
+
+    Respond with a JSON object containing:
+    {{
+        "is_ai": true/false,
+        "confidence": "High/Medium/Low",
+        "category": "Core AI"/"AI-Integrated"/"AI-Enabled"/"Non-AI",
+        "explanation": "2-3 sentence explanation",
+        "ai_aspects": ["list", "of", "AI", "aspects"]
+    }}
+    """
+
+    try:
+        response = model.generate_content(analysis_prompt)
+        result_text = response.text
+
+        # Parse JSON from response
+        json_start = result_text.find('{')
+        json_end = result_text.rfind('}') + 1
+
+        if json_start >= 0 and json_end > json_start:
+            result_json = json.loads(result_text[json_start:json_end])
+            return {
+                "company": company_name,
+                "is_ai": result_json.get("is_ai", False),
+                "confidence": result_json.get("confidence", "Medium"),
+                "category": result_json.get("category", "Unknown"),
+                "explanation": result_json.get("explanation", "No explanation provided"),
+                "ai_aspects": result_json.get("ai_aspects", [])
+            }
+    except Exception as e:
+        print(f"⚠️ Analysis error for {company_name}: {str(e)}")
+
+    return {
+        "company": company_name,
+        "is_ai": "Unknown",
+        "confidence": "Low",
+        "explanation": "Analysis failed",
+        "ai_aspects": []
+    }
+
+# ============ Cell 4: CSV Processing Functions ============
+def process_csv_file(file_path):
+    """Process uploaded CSV file and check each company"""
+
+    # Read CSV file
+    try:
+        # Try different encodings
+        for encoding in ['utf-8', 'latin1', 'iso-8859-1']:
+            try:
+                df = pd.read_csv(file_path, encoding=encoding)
+                break
+            except:
+                continue
+    except Exception as e:
+        print(f"❌ Error reading CSV: {str(e)}")
+        return None
+
+    print(f"✅ Loaded CSV with {len(df)} rows and {len(df.columns)} columns")
+    print(f"Columns found: {', '.join(df.columns)}")
+
+    # Find company name column
+    company_columns = ['company', 'Company', 'company_name', 'Company Name', 'Name', 'name']
+    company_col = None
+
+    for col in company_columns:
+        if col in df.columns:
+            company_col = col
+            break
+
+    if not company_col:
+        # If no standard column found, ask user to select
+        print("\n⚠️ No standard company column found.")
+        print("Available columns:", df.columns.tolist())
+        company_col = df.columns[0]  # Default to first column
+        print(f"Using first column: '{company_col}'")
+
+    # Process each company
+    results = []
+    total_companies = len(df)
+
+    print(f"\n🚀 Starting batch analysis of {total_companies} companies...")
+    print("This may take a few minutes...\n")
+
+    for idx, row in df.iterrows():
+        company_name = str(row[company_col]).strip()
+
+        if pd.isna(company_name) or company_name == '':
+            continue
+
+        print(f"\n[{idx+1}/{total_companies}] Processing: {company_name}")
+
+        # Check if AI company
+        result = check_ai_company(company_name)
+
+        # Add all original columns to result
+        for col in df.columns:
+            if col != company_col:
+                result[col] = row[col]
+
+        results.append(result)
+
+        # Rate limiting
+        time.sleep(1.5)  # Adjust as needed
+
+    return pd.DataFrame(results)
+
+def save_results(results_df, original_filename):
+    """Save results to CSV and Excel files"""
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_name = original_filename.replace('.csv', '')
+
+    # Save as CSV
+    csv_filename = f"{base_name}_ai_analysis_{timestamp}.csv"
+    results_df.to_csv(csv_filename, index=False)
+    print(f"\n✅ Results saved to: {csv_filename}")
+
+    # Save as Excel with formatting
+    excel_filename = f"{base_name}_ai_analysis_{timestamp}.xlsx"
+    with pd.ExcelWriter(excel_filename, engine='openpyxl') as writer:
+        results_df.to_excel(writer, sheet_name='AI Analysis', index=False)
+
+        # Get the worksheet
+        worksheet = writer.sheets['AI Analysis']
+
+        # Auto-adjust column widths
+        for column in worksheet.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            worksheet.column_dimensions[column_letter].width = adjusted_width
+
+    print(f"✅ Results saved to: {excel_filename}")
+
+    # Offer download
+    files.download(csv_filename)
+    files.download(excel_filename)
+
+    return csv_filename, excel_filename
+
+def print_summary_stats(results_df):
+    """Print summary statistics without visualizations"""
+    
+    print("\n📊 Analysis Summary:")
+    print("=" * 50)
+    print(f"Total companies analyzed: {len(results_df)}")
+    ai_count = results_df['is_ai'].sum()
+    non_ai_count = len(results_df) - ai_count
+    print(f"AI-related companies: {ai_count} ({ai_count/len(results_df)*100:.1f}%)")
+    print(f"Non-AI companies: {non_ai_count} ({non_ai_count/len(results_df)*100:.1f}%)")
+
+    if 'category' in results_df.columns:
+        print("\nCategory breakdown:")
+        category_counts = results_df['category'].value_counts()
+        for category, count in category_counts.items():
+            percentage = (count / len(results_df)) * 100
+            print(f"  {category}: {count} ({percentage:.1f}%)")
+
+    print("\nConfidence breakdown:")
+    confidence_counts = results_df['confidence'].value_counts()
+    for confidence, count in confidence_counts.items():
+        percentage = (count / len(results_df)) * 100
+        print(f"  {confidence}: {count} ({percentage:.1f}%)")
+
+    # Show top AI aspects if available
+    all_aspects = []
+    for aspects in results_df['ai_aspects']:
+        if isinstance(aspects, list):
+            all_aspects.extend(aspects)
+
+    if all_aspects:
+        print("\nTop AI aspects mentioned:")
+        aspect_counts = pd.Series(all_aspects).value_counts().head(10)
+        for aspect, count in aspect_counts.items():
+            print(f"  {aspect}: {count}")
+
+# ============ Cell 5: Main UI ============
+# Create upload widget
+upload_button = widgets.FileUpload(
+    accept='.csv',
+    multiple=False,
+    description='Upload CSV:',
+    button_style='success',
+    layout=widgets.Layout(width='300px')
+)
+
+process_button = widgets.Button(
+    description='Process CSV',
+    button_style='primary',
+    icon='play',
+    disabled=True,
+    layout=widgets.Layout(width='200px')
+)
+
+output_area = widgets.Output()
+
+# Global variable to store uploaded file
+uploaded_file_info = {'filename': None, 'content': None}
+
+def on_upload_change(change):
+    """Handle file upload"""
+    if upload_button.value:
+        uploaded_file = list(upload_button.value.values())[0]
+        uploaded_file_info['filename'] = uploaded_file['metadata']['name']
+        uploaded_file_info['content'] = uploaded_file['content']
+
+        with output_area:
+            clear_output()
+            print(f"✅ File uploaded: {uploaded_file_info['filename']}")
+            print(f"📄 Size: {len(uploaded_file_info['content'])} bytes")
+
+        process_button.disabled = False
+
+def on_process_clicked(b):
+    """Process the uploaded CSV file"""
+    with output_area:
+        clear_output()
+
+        if not uploaded_file_info['content']:
+            print("❌ No file uploaded!")
+            return
+
+        # Save uploaded file temporarily
+        temp_filename = uploaded_file_info['filename']
+        with open(temp_filename, 'wb') as f:
+            f.write(uploaded_file_info['content'])
+
+        # Process CSV
+        results_df = process_csv_file(temp_filename)
+
+        if results_df is not None and len(results_df) > 0:
+            print("\n✅ Analysis complete!")
+
+            # Save results
+            save_results(results_df, uploaded_file_info['filename'])
+
+            # Show summary statistics
+            print_summary_stats(results_df)
+
+            # Show sample results
+            print("\n📋 Sample Results (first 10 companies):")
+            sample_columns = ['company', 'is_ai', 'category', 'confidence', 'explanation']
+            display(results_df[sample_columns].head(10))
+
+        # Clean up
+        os.remove(temp_filename)
+
+# Set up event handlers
+upload_button.observe(on_upload_change, names='value')
+process_button.on_click(on_process_clicked)
+
+# Display UI
+print("🤖 AI Company Checker - CSV Batch Processor")
+print("=" * 50)
+print("📁 Upload a CSV file with company names to analyze")
+print("📊 Get AI classification, confidence levels, and summary statistics")
+print("💾 Results will be saved as CSV and Excel files\n")
+
+display(widgets.VBox([
+    widgets.HTML("<h3>📊 CSV Batch AI Company Analyzer</h3>"),
+    widgets.HTML("""
+    <p><b>Instructions:</b></p>
+    <ol>
+        <li>Upload a CSV file containing company names</li>
+        <li>The tool will auto-detect the company name column</li>
+        <li>Each company will be analyzed for AI relevance</li>
+        <li>Results will be saved with summary statistics</li>
+    </ol>
+    <p><b>CSV Format:</b> First column should contain company names, or use column headers like 'Company', 'company_name', etc.</p>
+    """),
+    upload_button,
+    process_button,
+    output_area
+]))
+
+# ============ Cell 6: Sample CSV Generator ============
+def create_sample_csv():
+    """Create a sample CSV file for testing"""
+
+    sample_data = {
+        'Company': [
+            'OpenAI', 'Tesla', 'McDonald\'s', 'Google', 'Anthropic',
+            'Nike', 'Microsoft', 'Amazon', 'Meta', 'Pfizer',
+            'Nvidia', 'IBM', 'Apple', 'Walmart', 'Coca-Cola',
+            'Databricks', 'Palantir', 'Salesforce', 'Adobe', 'Netflix'
+        ],
+        'Industry': [
+            'AI Research', 'Automotive', 'Food Service', 'Technology', 'AI Research',
+            'Apparel', 'Technology', 'E-commerce', 'Social Media', 'Pharmaceutical',
+            'Semiconductors', 'Technology', 'Technology', 'Retail', 'Beverages',
+            'Data Analytics', 'Software', 'CRM Software', 'Software', 'Entertainment'
+        ],
+        'Notes': [
+            'GPT developer', 'Electric vehicles', 'Fast food chain', 'Search engine', 'Claude AI',
+            'Sports apparel', 'Windows & Azure', 'AWS & Alexa', 'Facebook parent', 'Vaccines',
+            'AI chips', 'Watson AI', 'iPhone maker', 'Retail giant', 'Soft drinks',
+            'ML platform', 'Data analytics', 'Cloud CRM', 'Creative tools', 'Streaming'
+        ]
+    }
+
+    df = pd.DataFrame(sample_data)
+    filename = 'sample_companies.csv'
+    df.to_csv(filename, index=False)
+
+    print(f"✅ Sample CSV created: {filename}")
+    print(f"📊 Contains {len(df)} companies across various industries")
+
+    # Download the file
+    files.download(filename)
+
+    return filename
+
+# Create sample button
+sample_button = widgets.Button(
+    description='Generate Sample CSV',
+    button_style='info',
+    icon='file-download'
+)
+
+sample_button.on_click(lambda b: create_sample_csv())
+display(sample_button)
